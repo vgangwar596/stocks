@@ -1,6 +1,7 @@
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse # Added to serve frontend web text
 from pydantic import BaseModel
 import pandas as pd
 import numpy as np
@@ -10,10 +11,11 @@ import os
 
 app = FastAPI(title="Nifty 500 Production Engine")
 
+# Fully relaxed Wildcard CORS for standalone usage
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -33,6 +35,15 @@ def sanitize_value(val) -> float:
         return 0.0
     return float(val)
 
+# --- NEW ROUTE: SERVES THE UI DIRECTLY FROM THE CLOUD DOMAIN ---
+@app.get("/", response_class=HTMLResponse)
+async def serve_frontend():
+    """Reads index.html from the deployment folder and serves it to the browser."""
+    if os.path.exists("index.html"):
+        with open("index.html", "r", encoding="utf-8") as f:
+            return f.read()
+    return "<h1>Backend Operational. Ready to receive requests.</h1>"
+
 @app.post("/api/analyze-all")
 async def analyze_all_stocks(request: PredictionRequest):
     try:
@@ -40,15 +51,15 @@ async def analyze_all_stocks(request: PredictionRequest):
     except ValueError:
         raise HTTPException(status_code=400, detail="Use YYYY-MM-DD format.")
     
-    # Loads the full list of 500 stocks from your local CSV file
     tickers = load_local_nifty_universe()
+    start_date = (target_date - timedelta(days=45)).strftime('%Y-%m-%d')
     
-    # Set the historical data window boundaries
-    start_date = (target_date - timedelta(days=90)).strftime('%Y-%m-%d')
-    # Extend end_date to the current day to ensure we get the live real-time price row
-    end_date = (datetime.today() + timedelta(days=1)).strftime('%Y-%m-%d')
+    today = datetime.today()
+    end_dt = target_date + timedelta(days=3)
+    if end_dt > today:
+        end_dt = today + timedelta(days=1)
+    end_date = end_dt.strftime('%Y-%m-%d')
     
-    print(f"Downloading bulk market data for all {len(tickers)} stocks...")
     try:
         raw_data = yf.download(
             tickers=tickers, 
@@ -71,20 +82,15 @@ async def analyze_all_stocks(request: PredictionRequest):
             if ticker not in raw_data.columns.levels[0]:
                 continue
                 
-            # Drop rows missing closing prices
             df = raw_data[ticker].dropna(subset=['Close'])
             if df.empty:
                 continue
                 
-            # 1. Extract the Live Current Price (the most recent row in the entire dataset)
             live_current_price = float(df['Close'].iloc[-1])
-            
-            # 2. Filter the data to isolate rows up to the user's selected date
             target_df = df[df.index <= target_date]
             if len(target_df) < 20:
                 continue
             
-            # Extract rows for the selected date and the previous business day
             target_row = target_df.iloc[-1]
             prev_row = target_df.iloc[-2]
             actual_eval_date = target_df.index[-1]
@@ -92,7 +98,6 @@ async def analyze_all_stocks(request: PredictionRequest):
             selected_day_close = float(target_row['Close'])
             prev_day_close = float(prev_row['Close'])
             
-            # Technical Indicators
             close_series = target_df['Close']
             sma5 = close_series.rolling(window=5).mean().iloc[-1]
             sma20 = close_series.rolling(window=20).mean().iloc[-1]
@@ -111,7 +116,6 @@ async def analyze_all_stocks(request: PredictionRequest):
             if pd.isna(sma5) or pd.isna(sma20) or sma20 == 0:
                 continue
                 
-            # Trend Calculations
             sma_ratio = sma5 / sma20
             rsi_factor = (rsi / 100) if rsi < 75 else (1.5 - (rsi / 100))
             predicted_profit_score = ((sma_ratio - 1) * 50) + (rsi_factor * 5)
@@ -121,10 +125,8 @@ async def analyze_all_stocks(request: PredictionRequest):
             max_bound = max(float(volatility * 100 * 1.5), 2.5)
             predicted_change_pct = np.clip(predicted_change_pct, -max_bound, max_bound)
             
-            # Historical daily change on the selected day
             daily_change_pct = ((selected_day_close - prev_day_close) / prev_day_close) * 100
             
-            # Confidence Metrics
             volatility_penalty = (volatility * 100) * 12.0 
             rsi_instability_penalty = abs(50 - rsi) * 0.3 if abs(50 - rsi) < 10 else 0
             confidence_score = np.clip(90.0 - volatility_penalty - rsi_instability_penalty, 10.0, 98.0)
@@ -144,7 +146,6 @@ async def analyze_all_stocks(request: PredictionRequest):
         except Exception:
             continue
 
-    print(f"Processing complete. Displaying all {len(results)} valid stocks.")
     return {"status": "success", "total_processed": len(results), "data": results}
 
 if __name__ == "__main__":
