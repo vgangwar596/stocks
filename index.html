@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nifty Interactive Realtime Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+
+    <div class="container mx-auto px-4 py-8 max-w-6xl">
+        <header class="mb-8 text-center">
+            <h1 class="text-3xl font-black text-cyan-400 tracking-tight">📈 Nifty Auto-Sync Multi-Price Workspace</h1>
+            <p class="text-slate-400 text-sm mt-1">Tracks previous close vs selected close prices, along with live real-time market streaming values.</p>
+        </header>
+
+        <div class="bg-slate-900 p-4 rounded-xl border border-slate-800 flex flex-col lg:flex-row gap-4 items-center justify-between mb-6">
+            <div class="flex flex-wrap items-center gap-4 w-full lg:w-auto">
+                <div class="flex items-center gap-3">
+                    <span class="text-xs font-semibold uppercase text-slate-400">Target Date:</span>
+                    <input type="date" id="targetDate" class="bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white font-mono text-sm">
+                </div>
+                
+                <div class="flex items-center gap-3 bg-slate-950 px-4 py-2 border border-slate-800 rounded">
+                    <span class="text-xs font-semibold uppercase text-emerald-400">Profit Only:</span>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="profitToggle" onchange="renderTable()" class="sr-only peer">
+                        <div class="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500 peer-checked:after:bg-white"></div>
+                    </label>
+                </div>
+
+                <div class="flex items-center gap-3 bg-slate-950 px-4 py-2 border border-slate-800 rounded">
+                    <span class="text-xs font-semibold uppercase text-cyan-400">Nifty 100 Only:</span>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="nifty100Toggle" onchange="renderTable()" class="sr-only peer">
+                        <div class="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-500 peer-checked:after:bg-white"></div>
+                    </label>
+                </div>
+            </div>
+            
+            <button onclick="loadAndProcessData()" id="actionBtn" class="w-full lg:w-auto bg-cyan-500 hover:bg-cyan-600 text-slate-950 font-bold px-6 py-2.5 rounded transition shadow-lg shadow-cyan-500/10 mt-4 lg:mt-0">
+                Execute Market Scan
+            </button>
+        </div>
+
+        <div id="loadingBox" class="hidden text-center py-12">
+            <div class="animate-spin inline-block w-8 h-8 border-4 border-current border-t-transparent text-cyan-400 rounded-full mb-2"></div>
+            <p class="text-slate-400 text-sm">Parsing network channels & executing analytical computations...</p>
+        </div>
+
+        <div id="outputContainer" class="hidden bg-slate-900 rounded-xl border border-slate-800 overflow-hidden shadow-2xl">
+            <div class="bg-slate-850 px-4 py-3 border-b border-slate-800 text-xs text-slate-400 flex justify-between items-center">
+                <span>💡 Click column headers to re-sort dataset instantly.</span>
+                <span id="tickerCount" class="font-mono bg-slate-950 px-2 py-0.5 rounded text-cyan-400 font-bold"></span>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-950 text-xs font-bold uppercase tracking-wider text-slate-400 border-b border-slate-800 select-none">
+                            <th class="p-4 text-center w-12">Item</th>
+                            <th onclick="toggleSort('ticker')" class="p-4 cursor-pointer hover:text-cyan-400 transition">Ticker ⇅</th>
+                            <th onclick="toggleSort('previous_close')" class="p-4 cursor-pointer hover:text-cyan-400 transition text-right">Prev Close ⇅</th>
+                            <th onclick="toggleSort('selected_close')" class="p-4 cursor-pointer hover:text-cyan-400 transition text-right">Selected Close ⇅</th>
+                            <th onclick="toggleSort('daily_change_pct')" class="p-4 cursor-pointer hover:text-cyan-400 transition text-right">Day Change ⇅</th>
+                            <th onclick="toggleSort('current_price')" class="p-4 cursor-pointer text-yellow-400 hover:text-yellow-300 transition text-right">Live Current Price ⇅</th>
+                            <th onclick="toggleSort('rsi')" class="p-4 cursor-pointer hover:text-cyan-400 transition text-center">RSI ⇅</th>
+                            <th onclick="toggleSort('predicted_change_pct')" class="p-4 cursor-pointer text-emerald-400 hover:text-emerald-300 transition text-right">Predicted Change ⇅</th>
+                            <th onclick="toggleSort('confidence_score')" class="p-4 cursor-pointer text-amber-400 hover:text-amber-300 transition text-center">Confidence ⇅</th>
+                            <th onclick="toggleSort('predicted_profit_score')" class="p-4 cursor-pointer text-cyan-400 hover:text-cyan-300 transition text-right">Profit Score ⇅</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody" class="divide-y divide-slate-800/50"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('targetDate').value = new Date().toISOString().split('T')[0];
+
+        // Static tracking registry array of Nifty 100 elements used for view mapping
+        const nifty100List = new Set([
+            "ABB", "3MINDIA", "ACC", "AIAENG", "APLAPOLLO", "AUBANK", "AWL", "AARTIIND", 
+            "ABBOTINDIA", "ADANIENSOL", "ADANIENT", "ADANIGREEN", "ADANIPORTS", "ADANIPOWER", 
+            "AMBUJACEM", "APOLLOHOSP", "ASIANPAINT", "DMART", "AXISBANK", "BAJAJ-AUTO", 
+            "BAJFINANCE", "BAJAJFINSV", "BAJAJHLDNG", "BANKBARODA", "BEL", "BPCL", 
+            "BHARTIARTL", "BOSCHLTD", "BRITANNIA", "CGPOWER", "CANBK", "CHOLAFIN", 
+            "CIPLA", "COALINDIA", "CUMMINSIND", "DLF", "DIVISLAB", "DRREDDY", 
+            "EICHERMOT", "ETERNAL", "GAIL", "GODREJCP", "GRASIM", "HCLTECH", 
+            "HDFCAMC", "HDFCBANK", "HDFCLIFE", "HINDALCO", "HAL", "HINDUNILVR", 
+            "HINDZINC", "HYUNDAI", "ICICIBANK", "ITC", "INDHOTEL", "IOC", 
+            "IRFC", "INFY", "INDIGO", "JSWSTEEL", "JINDALSTEL", "JIOFIN", 
+            "KOTAKBANK", "LTM", "LT", "LODHA", "M&M", "MARUTI", "MAXHEALTH", 
+            "MAZDOCK", "MUTHOOTFIN", "NTPC", "NESTLEIND", "ONGC", "PIDILITIND", 
+            "PFC", "POWERGRID", "PNB", "RECLTD", "RELIANCE", "SBILIFE", 
+            "MOTHERSON", "SHREECEM", "SHRIRAMFIN", "ENRIN", "SIEMENS", "SOLARINDS", 
+            "SBIN", "SUNPHARMA", "TVSMOTOR", "TATACAP", "TCS", "TATACONSUM", 
+            "TMCV", "TMPV", "TATAPOWER", "TATASTEEL", "TECHM", "TITAN", 
+            "TORNTPHARM", "TRENT", "ULTRACEMCO", "UNIONBANK", "UNITDSPR", "VBL", 
+            "VEDL", "WIPRO", "ZYDUSLIFE"
+        ]);
+
+        let cachedStockData = [];
+        let currentSortKey = 'predicted_profit_score';
+        let isAscending = false;
+
+        async function loadAndProcessData() {
+            const dateVal = document.getElementById('targetDate').value;
+            const loadingBox = document.getElementById('loadingBox');
+            const outputContainer = document.getElementById('outputContainer');
+            const actionBtn = document.getElementById('actionBtn');
+
+            if (!dateVal) return alert("Select an evaluation date.");
+
+            loadingBox.classList.remove('hidden');
+            outputContainer.classList.add('hidden');
+            actionBtn.disabled = true;
+
+            try {
+                const response = await fetch('http://127.0.0.1:8080/api/analyze-all', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ requested_date: dateVal })
+                });
+                const res = await response.json();
+                
+                if (!response.ok) throw new Error(res.detail || "Server connectivity fault.");
+
+                cachedStockData = res.data;
+                
+                currentSortKey = 'predicted_profit_score';
+                isAscending = false;
+
+                renderTable();
+                outputContainer.classList.remove('hidden');
+            } catch (err) {
+                alert(`Error: ${err.message}`);
+            } finally {
+                loadingBox.classList.add('hidden');
+                actionBtn.disabled = false;
+            }
+        }
+
+        function toggleSort(key) {
+            if (cachedStockData.length === 0) return;
+            if (currentSortKey === key) {
+                isAscending = !isAscending;
+            } else {
+                currentSortKey = key;
+                isAscending = (key === 'ticker');
+            }
+            renderTable();
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('tableBody');
+            const tickerCount = document.getElementById('tickerCount');
+            const isProfitOnly = document.getElementById('profitToggle').checked;
+            const isNifty100Only = document.getElementById('nifty100Toggle').checked;
+            
+            tbody.innerHTML = '';
+
+            // 1. Dual-Layer Filtering Pipeline
+            let displayData = [...cachedStockData];
+            
+            if (isProfitOnly) {
+                displayData = displayData.filter(stock => stock.predicted_change_pct > 0);
+            }
+            
+            if (isNifty100Only) {
+                displayData = displayData.filter(stock => nifty100List.has(stock.ticker));
+            }
+
+            tickerCount.innerText = `Stocks Visible: ${displayData.length}`;
+
+            // 2. Client Side Sorting Mechanics
+            displayData.sort((a, b) => {
+                let valA = a[currentSortKey];
+                let valB = b[currentSortKey];
+                if (typeof valA === 'string') {
+                    return isAscending ? valA.localeCompare(valB) : valB.localeCompare(valA);
+                }
+                return isAscending ? valA - valB : valB - valA;
+            });
+
+            // 3. Grid Row Injection
+            displayData.forEach((stock, index) => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-900/60 transition text-slate-300 text-sm";
+                
+                const dayColor = stock.daily_change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400';
+                const daySign = stock.daily_change_pct >= 0 ? '+' : '';
+                
+                const predColor = stock.predicted_change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400';
+                const predSign = stock.predicted_change_pct >= 0 ? '+' : '';
+
+                let confidenceBadgeClass = 'bg-rose-950 text-rose-400 border-rose-800';
+                if (stock.confidence_score >= 75) {
+                    confidenceBadgeClass = 'bg-emerald-950 text-emerald-400 border-emerald-800';
+                } else if (stock.confidence_score >= 45) {
+                    confidenceBadgeClass = 'bg-amber-950 text-amber-400 border-amber-800';
+                }
+
+                tr.innerHTML = `
+                    <td class="p-4 text-center text-slate-600 font-bold text-xs">${index + 1}</td>
+                    <td class="p-4 font-mono font-bold text-white">${stock.ticker}</td>
+                    <td class="p-4 text-right font-mono text-slate-400">₹${stock.previous_close.toFixed(2)}</td>
+                    <td class="p-4 text-right font-mono text-white">₹${stock.selected_close.toFixed(2)}</td>
+                    <td class="p-4 text-right font-medium ${dayColor}">${daySign}${stock.daily_change_pct.toFixed(2)}%</td>
+                    <td class="p-4 text-right font-mono font-bold text-yellow-400">₹${stock.current_price.toFixed(2)}</td>
+                    <td class="p-4 text-center font-mono text-slate-400">${stock.rsi.toFixed(2)}</td>
+                    <td class="p-4 text-right font-bold ${predColor} font-mono">${predSign}${stock.predicted_change_pct.toFixed(2)}%</td>
+                    <td class="p-4 text-center">
+                        <span class="px-2 py-0.5 rounded-full border text-xs font-bold font-mono ${confidenceBadgeClass}">
+                            ${stock.confidence_score.toFixed(2)}%
+                        </span>
+                    </td>
+                    <td class="p-4 text-right font-bold text-cyan-400 font-mono tracking-wide">${stock.predicted_profit_score.toFixed(2)}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+    </script>
+</body>
+</html>
